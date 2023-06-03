@@ -35,9 +35,16 @@ typedef struct args {
   int num_threads;
   int num_processors;
 
+  int* num_bands_per_thread;
+  int* final_array;
+
+  double* filter_coefficients;
+
 
   // double band_power[];
 } args;
+
+args swag_1;
 
 void usage() {
   printf("usage: p_band_scan text|bin|mmap signal_file Fs filter_order num_bands num_threads num_processors\n");
@@ -94,28 +101,22 @@ void* worker (void* arg)  {
 
   args *swag = (args*) arg; // Type-casting the struct so that we can utilize it
                           //
-
-  double filter_coeffs[swag->filter_order + 1] ; // This initializes a private (and mutable) version of
-                                           // filter_
-
-
-
   //
-  for (int band = swag->id; band < swag->num_bands; band += swag->num_threads) {
+  for (int band = swag_1.final_array[swag_1.id]; band < swag_1.final_array[swag_1.id + 1]; band++) {
     // Make the filter
     generate_band_pass(swag->sig->Fs,
                        band * swag->bandwidth + 0.0001, // keep within limits
                        (band + 1) * swag->bandwidth - 0.0001,
                        swag->filter_order,
-                       filter_coeffs); //
-    hamming_window(swag->filter_order, filter_coeffs);
+                       swag->filter_coefficients); //
+    hamming_window(swag->filter_order, swag->filter_coefficients);
 
 
     // Convolve
     convolve_and_compute_power(swag->sig->num_samples,
                                swag->sig->data,
                                swag->filter_order,
-                               filter_coeffs,
+                               swag->filter_coefficients,
                                &(swag->band_power[band]));
   }
   pthread_exit(NULL);
@@ -145,7 +146,6 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
   double start = get_seconds();
   unsigned long long tstart = get_cycle_count();
 
-  double filter_coeffs[filter_order + 1]; // Note that this variable changes in filter.c?
   double band_power[num_bands];
 
   // Declare the struct that contains all of the arguments
@@ -155,24 +155,25 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
   // Actually initialize the threads and give them the space within the thread_ids array
   //
   // Creating a dynamic array that allocates memory for any number of processor threads
-
-  args* thread_array = (args*) malloc(sizeof(args) * num_threads);
+  args swag_2[num_threads];
+  pthread_t* thread_array = malloc(sizeof(pthread_t) * num_threads);
 
 
   // NOTE: pthread_create(thread_handle, attirbutes, thread_function, function_argument)
   for (int i = 0; i < num_threads; i++) {
-    thread_array[i].sig = sig;
-    thread_array[i].filter_order = filter_order;
-    thread_array[i].num_bands = num_bands;
-    thread_array[i].lb = lb;
-    thread_array[i].ub = ub;
-    thread_array[i].bandwidth = bandwidth;
-    thread_array[i].band_power = band_power;
-    thread_array[i].num_threads = num_threads;
-    thread_array[i].num_processors = num_processors;
-    thread_array[i].id = i;
-    pthread_create( &(threads_ids[i]), NULL, worker, &thread_array[i]);
-  }
+    // swag_2[i].sig = sig;
+    swag_2[i].filter_order = filter_order;
+    // swag_2[i].num_bands = num_bands;
+    // swag_2[i].lb = lb;
+    // swag_2[i].ub = ub;
+    swag_2[i].bandwidth = bandwidth;
+    swag_2[i].band_power = band_power;
+    swag_2[i].num_threads = num_threads;
+    // swag_2[i].num_processors = num_processors;
+    swag_2[i].id = i;
+    swag_2[i].filter_coefficients = (double*) malloc(sizeof(double) * (filter_order + 1));
+    pthread_create( &(thread_array[i]), NULL, worker, (void*) &swag_2[i]);
+  } 
 
   for (long i = 0; i < num_threads; i++) {
     pthread_join(threads_ids[i], NULL);
@@ -311,6 +312,26 @@ int main(int argc, char* argv[]) {
 
   double start = 0;
   double end   = 0;
+
+  int var = num_bands / num_threads;
+  int remainder = num_bands % num_threads;
+
+  swag_1.num_bands_per_thread = (int*)malloc(sizeof(int) * num_threads);
+  swag_1.final_array = (int*)malloc(sizeof(int) * (num_threads + 1));
+
+  for (int i = 0; i < num_threads; i++) {
+    swag_1.num_bands_per_thread[i] = var;
+  }
+
+  for (int j = 0; j < remainder; j++) {
+    swag_1.num_bands_per_thread[j] += 1;
+  }
+
+  swag_1.final_array[0] = 0;
+  for (int k = 1; k < num_threads + 1; k++) {
+    swag_1.final_array[k] = swag_1.num_bands_per_thread[k-1] + swag_1.final_array[k-1];
+  }
+
   // NOTE: Added the "num_threads" and the "num_processors" argument to the analyze_signal functoi n
   if (analyze_signal(sig, filter_order, num_bands, &start, &end, num_threads, num_processors)) {
     printf("POSSIBLE ALIENS %lf-%lf HZ (CENTER %lf HZ)\n", start, end, (end + start) / 2.0);
@@ -322,4 +343,3 @@ int main(int argc, char* argv[]) {
 
   return 0;
 }
-
