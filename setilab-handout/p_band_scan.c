@@ -2,25 +2,25 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <assert.h>
+#include <pthread.h>
 #include <sched.h>
 #include <unistd.h>
-#include <pthread.h>
 
 #include "filter.h"
 #include "signal.h"
 #include "timing.h"
+#include "math.h"
 
 #define MAXWIDTH 40
 #define THRESHOLD 2.0
 #define ALIENS_LOW  50000.0
 #define ALIENS_HIGH 150000.0
 
-
 // TODO Create a struct that contains all of the necessary arguments to
 // do the computation
 typedef struct args {
   // Analyze_signal arguments
-  signal* sig;
+  // signal* sig;
   int filter_order;
   int num_bands;
   double* lb;
@@ -32,8 +32,8 @@ typedef struct args {
   double* band_power;
 
   // Main arguments
-  int num_threads;
-  int num_processors;
+  // int num_threads;
+  // int num_processors;
 
   int* num_bands_per_thread;
   int* final_array;
@@ -44,7 +44,13 @@ typedef struct args {
   // double band_power[];
 } args;
 
+//global struct
 args swag_1;
+int num_bands;
+int num_threads;
+long num_processors;
+pthread_t* id_2;
+signal* sig_1;
 
 void usage() {
   printf("usage: p_band_scan text|bin|mmap signal_file Fs filter_order num_bands num_threads num_processors\n");
@@ -99,25 +105,25 @@ void remove_dc(double* data, int num) {
 // that we want the thread to actually be completing.
 void* worker (void* arg)  {
 
-  args *swag = (args*) arg; // Type-casting the struct so that we can utilize it
+  args swag = *(args*) arg; // Type-casting the struct so that we can utilize it
                           //
   //
-  for (int band = swag_1.final_array[swag_1.id]; band < swag_1.final_array[swag_1.id + 1]; band++) {
+  for (int band = swag_1.final_array[(long) swag_1.id]; band < swag_1.final_array[(long) swag_1.id + 1]; band++) {
     // Make the filter
-    generate_band_pass(swag->sig->Fs,
-                       band * swag->bandwidth + 0.0001, // keep within limits
-                       (band + 1) * swag->bandwidth - 0.0001,
-                       swag->filter_order,
-                       swag->filter_coefficients); //
-    hamming_window(swag->filter_order, swag->filter_coefficients);
+    generate_band_pass(sig_1->Fs,
+                       band * swag.bandwidth + 0.0001, // keep within limits
+                       (band + 1) * swag.bandwidth - 0.0001,
+                       swag.filter_order,
+                       swag.filter_coefficients); //
+    hamming_window(swag.filter_order, swag.filter_coefficients);
 
 
     // Convolve
-    convolve_and_compute_power(swag->sig->num_samples,
-                               swag->sig->data,
-                               swag->filter_order,
-                               swag->filter_coefficients,
-                               &(swag->band_power[band]));
+    convolve_and_compute_power(sig_1->num_samples,
+                               sig_1->data,
+                               swag.filter_order,
+                               swag.filter_coefficients,
+                               &(swag.band_power[band]));
   }
   pthread_exit(NULL);
 }
@@ -130,8 +136,8 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
 
   // Initialize the memory addresses for which the threads will
   // perform their computations
-  pthread_t threads_ids[num_threads];
-
+  sig_1 = sig;
+  id_2 = malloc(sizeof(pthread_t) * num_threads);
   double Fc        = (sig->Fs) / 2;
   double bandwidth = Fc / num_bands;
 
@@ -156,8 +162,6 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
   //
   // Creating a dynamic array that allocates memory for any number of processor threads
   args swag_2[num_threads];
-  pthread_t* thread_array = malloc(sizeof(pthread_t) * num_threads);
-
 
   // NOTE: pthread_create(thread_handle, attirbutes, thread_function, function_argument)
   for (int i = 0; i < num_threads; i++) {
@@ -168,15 +172,23 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
     // swag_2[i].ub = ub;
     swag_2[i].bandwidth = bandwidth;
     swag_2[i].band_power = band_power;
-    swag_2[i].num_threads = num_threads;
+    // swag_2[i].num_threads = num_threads;
     // swag_2[i].num_processors = num_processors;
     swag_2[i].id = i;
     swag_2[i].filter_coefficients = (double*) malloc(sizeof(double) * (filter_order + 1));
-    pthread_create( &(thread_array[i]), NULL, worker, (void*) &swag_2[i]);
+    int return_code = pthread_create( &(id_2[i]), NULL, worker, (void*) &swag_2[i]);
+    if (return_code != 0) {
+      perror("Failed to create thread");
+      exit(-1);
+    }
   } 
 
   for (long i = 0; i < num_threads; i++) {
-    pthread_join(threads_ids[i], NULL);
+    int return_code = pthread_join(id_2[i], NULL);
+    if (return_code != 0) {
+      perror("Failed to create thread");
+      exit(-1);
+    }
   }
 
   unsigned long long tend = get_cycle_count();
