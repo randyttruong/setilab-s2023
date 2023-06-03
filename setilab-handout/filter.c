@@ -23,8 +23,10 @@ int generate_low_pass(double Fs, double Fc,
   return 0;
 }
 
+
 int generate_high_pass(double Fs, double Fc,
                        int order, double coeffs[]) {
+
   assert(order > 0 && !(order & 0x1));
   assert(Fs > 0 && Fc > 0 && Fc < Fs / 2);
 
@@ -39,6 +41,9 @@ int generate_high_pass(double Fs, double Fc,
   }
   return 0;
 }
+
+// TODO: Think about the return statements
+// This function is used inside of analyze_signal
 
 int generate_band_pass(double Fs, double Fcl, double Fch,
                        int order, double coeffs[]) {

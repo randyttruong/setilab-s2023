@@ -2,24 +2,45 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <assert.h>
+#include <sched.h>
+#include <unistd.h>
+#include <pthread.h>
 
 #include "filter.h"
 #include "signal.h"
 #include "timing.h"
-
-// Parallel Computing Libraries
-
-#include <sched.h>
-#include <unistd.h>
-#include <pthread.h> // pthread
 
 #define MAXWIDTH 40
 #define THRESHOLD 2.0
 #define ALIENS_LOW  50000.0
 #define ALIENS_HIGH 150000.0
 
+
+// TODO Create a struct that contains all of the necessary arguments to
+// do the computation
+typedef struct args {
+  // Analyze_signal arguments
+  signal* sig;
+  int filter_order;
+  int num_bands;
+  double* lb;
+  double* ub;
+  int id;
+
+  // Derived Quants in analyze_signal
+  int bandwidth;
+  double* band_power;
+
+  // Main arguments
+  int num_threads;
+  int num_processors;
+
+
+  // double band_power[];
+} args;
+
 void usage() {
-  printf("usage: p_band_scan text|bin|mmap signal_file Fs filter_order num_bands num_threads num_processors \n");
+  printf("usage: p_band_scan text|bin|mmap signal_file Fs filter_order num_bands num_threads num_processors\n");
 }
 
 double avg_power(double* data, int num) {
@@ -44,7 +65,6 @@ double max_of(double* data, int num) {
 }
 
 double avg_of(double* data, int num) {
-
   double s = 0;
   for (int i = 0; i < num; i++) {
     s += data[i];
@@ -63,22 +83,53 @@ void remove_dc(double* data, int num) {
   }
 }
 
-long numproc; // number of processors sto use
-pthread_t* tid; // array of thread ids
 
-// Parallelization Plan
+// TODO Create the worker function. Note that we are ~not~ going
+// to be passing in any ~actual~ arguments into void. The entire
+// point of this is because whenever we are calling the pthread_create()
+// function, we are going to be passing in the struct which ontains
+// all of the differnet fields that are necessary for the computation
+// that we want the thread to actually be completing.
+void* worker (void* arg)  {
 
-// Create num_threads for different threads 
-// Use threads to create partial sums for each portion of the work
-// Wait until thread processes are complete, then su the results 
+  args *swag = (args*) arg; // Type-casting the struct so that we can utilize it
+                          //
+
+  double filter_coeffs[swag->filter_order + 1] ; // This initializes a private (and mutable) version of
+                                           // filter_
 
 
-void* worker(void* arg) {
-long my
-} 
+
+  //
+  for (int band = swag->id; band < swag->num_bands; band += swag->num_threads) {
+    // Make the filter
+    generate_band_pass(swag->sig->Fs,
+                       band * swag->bandwidth + 0.0001, // keep within limits
+                       (band + 1) * swag->bandwidth - 0.0001,
+                       swag->filter_order,
+                       filter_coeffs); //
+    hamming_window(swag->filter_order, filter_coeffs);
 
 
-int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, double* ub) {
+    // Convolve
+    convolve_and_compute_power(swag->sig->num_samples,
+                               swag->sig->data,
+                               swag->filter_order,
+                               filter_coeffs,
+                               &(swag->band_power[band]));
+  }
+  pthread_exit(NULL);
+}
+
+
+// TODO
+// - Create an array that initializes the thread s
+// - Pass in the arguments "num_threads" and "num_processors"
+int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, double* ub, int num_threads, int num_processors) {
+
+  // Initialize the memory addresses for which the threads will
+  // perform their computations
+  pthread_t threads_ids[num_threads];
 
   double Fc        = (sig->Fs) / 2;
   double bandwidth = Fc / num_bands;
@@ -94,24 +145,37 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
   double start = get_seconds();
   unsigned long long tstart = get_cycle_count();
 
-  double filter_coeffs[filter_order + 1];
+  double filter_coeffs[filter_order + 1]; // Note that this variable changes in filter.c?
   double band_power[num_bands];
-  for (int band = 0; band < num_bands; band++) {
-    // Make the filter
-    generate_band_pass(sig->Fs,
-                       band * bandwidth + 0.0001, // keep within limits
-                       (band + 1) * bandwidth - 0.0001,
-                       filter_order,
-                       filter_coeffs);
-    hamming_window(filter_order,filter_coeffs);
 
-    // Convolve
-    convolve_and_compute_power(sig->num_samples,
-                               sig->data,
-                               filter_order,
-                               filter_coeffs,
-                               &(band_power[band]));
+  // Declare the struct that contains all of the arguments
+  // necessary for splitting all of the threads
+  //
 
+  // Actually initialize the threads and give them the space within the thread_ids array
+  //
+  // Creating a dynamic array that allocates memory for any number of processor threads
+
+  args* thread_array = (args*) malloc(sizeof(args) * num_threads);
+
+
+  // NOTE: pthread_create(thread_handle, attirbutes, thread_function, function_argument)
+  for (int i = 0; i < num_threads; i++) {
+    thread_array[i].sig = sig;
+    thread_array[i].filter_order = filter_order;
+    thread_array[i].num_bands = num_bands;
+    thread_array[i].lb = lb;
+    thread_array[i].ub = ub;
+    thread_array[i].bandwidth = bandwidth;
+    thread_array[i].band_power = band_power;
+    thread_array[i].num_threads = num_threads;
+    thread_array[i].num_processors = num_processors;
+    thread_array[i].id = i;
+    pthread_create( &(threads_ids[i]), NULL, worker, &thread_array[i]);
+  }
+
+  for (long i = 0; i < num_threads; i++) {
+    pthread_join(threads_ids[i], NULL);
   }
 
   unsigned long long tend = get_cycle_count();
@@ -186,9 +250,10 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
   return wow;
 }
 
+// TODO Allow for the pass in of arguments
 int main(int argc, char* argv[]) {
 
-  if (argc != 6) {
+  if (argc != 8) {
     usage();
     return -1;
   }
@@ -198,11 +263,8 @@ int main(int argc, char* argv[]) {
   double Fs        = atof(argv[3]);
   int filter_order = atoi(argv[4]);
   int num_bands    = atoi(argv[5]);
-
-  // num_threads
-  int num_threads = atoi(argv[6]); 
-  // num_processors 
-  int num_processors = atoi(argv[7]) - 1 ; 
+  int num_threads = atoi(argv[6]);
+  int num_processors = atoi(argv[7]);
 
   assert(Fs > 0.0);
   assert(filter_order > 0 && !(filter_order & 0x1));
@@ -249,7 +311,8 @@ int main(int argc, char* argv[]) {
 
   double start = 0;
   double end   = 0;
-  if (analyze_signal(sig, filter_order, num_bands, &start, &end)) {
+  // NOTE: Added the "num_threads" and the "num_processors" argument to the analyze_signal functoi n
+  if (analyze_signal(sig, filter_order, num_bands, &start, &end, num_threads, num_processors)) {
     printf("POSSIBLE ALIENS %lf-%lf HZ (CENTER %lf HZ)\n", start, end, (end + start) / 2.0);
   } else {
     printf("no aliens\n");

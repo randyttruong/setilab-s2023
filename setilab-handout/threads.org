@@ -1,0 +1,58 @@
+#+title: Threads
+
+#+begin_src C
+
+
+
+// Create argument struct that are passed into
+
+struct args {
+
+    int
+}
+
+void worker (*args){
+
+    // Adapt original loop into worker to do computations
+
+
+
+}
+
+
+// Take into account the arguments of analyze signal and then
+// pass them into the struct
+int analyze_signal {
+
+    //
+    pthread_t thread_ids[num_threads] ;
+
+
+
+    for (long i = 0; i < num_threads; i++) {
+        pthread_create( &tid[i], NULL, worker, (void*)i);
+    }
+    // (thread_handle, attributes, thread_function, function_argument)
+
+    // Distribute Work
+    // (vector_len / num_threads); // Maybe use to distribute work?
+
+    pthread_create
+
+    pthread_join {  }
+
+
+    pthread_exit();
+
+
+    // Remember to allocate the memory for each thread
+
+}
+
+int main {
+    // Pass in argument
+    arg[6]
+    arg[7]
+
+}
+#+end_src
