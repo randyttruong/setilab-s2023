@@ -1,3 +1,4 @@
+// include standard library
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -6,51 +7,50 @@
 #include <sched.h>
 #include <unistd.h>
 
+// include other source files
 #include "filter.h"
 #include "signal.h"
 #include "timing.h"
 #include "math.h"
 
+// some definitions
 #define MAXWIDTH 40
 #define THRESHOLD 2.0
 #define ALIENS_LOW  50000.0
 #define ALIENS_HIGH 150000.0
 
-// TODO Create a struct that contains all of the necessary arguments to
-// do the computation
+//global variables that we need
+
+int num_bands;
+int num_threads;
+long num_processors;
+pthread_t* id_2;
+signal* sig_1;
+
+// our struct with variables needed by functions later (in analyze_signal, worker)
 typedef struct args {
-  // Analyze_signal arguments
-  // signal* sig;
   int filter_order;
   int num_bands;
   double* lb;
   double* ub;
   int id;
-
-  // Derived Quants in analyze_signal
   int bandwidth;
   double* band_power;
 
   // Main arguments
-  // int num_threads;
-  // int num_processors;
+  int num_threads;
+  int num_processors;
 
   int* num_bands_per_thread;
   int* final_array;
 
   double* filter_coefficients;
 
-
+  signal* sig;
   // double band_power[];
 } args;
 
-//global struct
 args swag_1;
-int num_bands;
-int num_threads;
-long num_processors;
-pthread_t* id_2;
-signal* sig_1;
 
 void usage() {
   printf("usage: p_band_scan text|bin|mmap signal_file Fs filter_order num_bands num_threads num_processors\n");
@@ -108,9 +108,9 @@ void* worker (void* arg)  {
   args swag = *(args*) arg; // Type-casting the struct so that we can utilize it
                           //
   //
-  for (int band = swag_1.final_array[(long) swag_1.id]; band < swag_1.final_array[(long) swag_1.id + 1]; band++) {
+  for (int band = swag.id; band < swag.num_bands; band += swag.num_threads) {
     // Make the filter
-    generate_band_pass(sig_1->Fs,
+    generate_band_pass(swag.sig->Fs,
                        band * swag.bandwidth + 0.0001, // keep within limits
                        (band + 1) * swag.bandwidth - 0.0001,
                        swag.filter_order,
@@ -119,8 +119,8 @@ void* worker (void* arg)  {
 
 
     // Convolve
-    convolve_and_compute_power(sig_1->num_samples,
-                               sig_1->data,
+    convolve_and_compute_power(swag.sig->num_samples,
+                               swag.sig->data,
                                swag.filter_order,
                                swag.filter_coefficients,
                                &(swag.band_power[band]));
@@ -136,7 +136,6 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
 
   // Initialize the memory addresses for which the threads will
   // perform their computations
-  sig_1 = sig;
   id_2 = malloc(sizeof(pthread_t) * num_threads);
   double Fc        = (sig->Fs) / 2;
   double bandwidth = Fc / num_bands;
@@ -165,14 +164,14 @@ int analyze_signal(signal* sig, int filter_order, int num_bands, double* lb, dou
 
   // NOTE: pthread_create(thread_handle, attirbutes, thread_function, function_argument)
   for (int i = 0; i < num_threads; i++) {
-    // swag_2[i].sig = sig;
+    swag_2[i].sig = sig;
     swag_2[i].filter_order = filter_order;
-    // swag_2[i].num_bands = num_bands;
+    swag_2[i].num_bands = num_bands;
     // swag_2[i].lb = lb;
     // swag_2[i].ub = ub;
     swag_2[i].bandwidth = bandwidth;
     swag_2[i].band_power = band_power;
-    // swag_2[i].num_threads = num_threads;
+    swag_2[i].num_threads = num_threads;
     // swag_2[i].num_processors = num_processors;
     swag_2[i].id = i;
     swag_2[i].filter_coefficients = (double*) malloc(sizeof(double) * (filter_order + 1));
@@ -345,7 +344,7 @@ int main(int argc, char* argv[]) {
   }
 
   // NOTE: Added the "num_threads" and the "num_processors" argument to the analyze_signal functoi n
-  if (analyze_signal(sig, filter_order, num_bands, &start, &end, num_threads, num_processors)) {
+  if (analyze_signal(sig, filter_order, num_bands, &start, &end, num_threads, num_processors - 1)) {
     printf("POSSIBLE ALIENS %lf-%lf HZ (CENTER %lf HZ)\n", start, end, (end + start) / 2.0);
   } else {
     printf("no aliens\n");
