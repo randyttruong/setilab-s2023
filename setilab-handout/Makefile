@@ -1,7 +1,7 @@
 # You can pick a different compiler here
 # and also choose different options
 
-CC = gcc -g -Wall
+CC = clang -g -Ofast -march=native -Wall
 AR = ar
 
 
